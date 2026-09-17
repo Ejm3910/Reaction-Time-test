@@ -126,6 +126,8 @@ input{font:inherit;color:var(--ink)}
 .ranklist .rn{flex:1;min-width:0;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ranklist .rd{display:block;font-size:12px;color:var(--muted);font-weight:400}
 .ranklist .rms{font-family:var(--display);font-size:22px;flex:none}
+.rankstatus{font-size:13px;color:var(--muted);margin:-6px 0 14px}
+.ranklist li.mine .rn{color:var(--signal)}
 .empty-line{font-size:14px;color:var(--muted);padding:12px 0;border-top:1px solid var(--line)}
 
 /* modals */
@@ -140,6 +142,7 @@ input{font:inherit;color:var(--ink)}
 .levels button{border:1.5px solid var(--line);border-radius:12px;padding:12px 4px;text-align:center;background:var(--bg)}
 .levels b{display:block;font-family:var(--display);font-weight:400;font-size:32px;line-height:1.1}
 .levels span{display:block;font-size:12px;color:var(--muted);margin-top:2px}
+.levels .lvpt{color:var(--ink);font-weight:700}
 .levels button[aria-checked="true"]{border-color:var(--ink);box-shadow:inset 0 0 0 1px var(--ink)}
 .sheet-actions{display:grid;grid-template-columns:1fr 2fr;gap:8px;margin-top:18px}
 .sheet-actions .btn{font-size:20px;padding:14px}
@@ -210,6 +213,7 @@ input{font:inherit;color:var(--ink)}
 .netcard .btn{font-size:18px;padding:12px}
 .neterr{color:var(--signal);font-size:14px;margin-top:12px;font-weight:500}
 .neterr:empty{display:none}
+.netwarn{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);margin-top:-50px;z-index:9;background:#FFD34D;color:#211900;font-size:13px;font-weight:700;padding:6px 12px;border-radius:999px;pointer-events:none;white-space:nowrap}
 #fx{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:7}
 
 @media (prefers-reduced-motion: reduce){
@@ -250,7 +254,7 @@ input{font:inherit;color:var(--ink)}
       <button data-r="3">3판 2선승</button>
       <button data-r="5">5판 3선승</button>
     </div>
-    <p class="note">대결에서 이기면 1~5P 중 랜덤으로 받아요. 포인트는 상점에서 쓸 수 있어요.</p>
+    <p class="note" id="roundsNote"></p>
 
     <div class="cta">
       <button class="btn primary" id="startBtn">대결 시작</button>
@@ -292,10 +296,11 @@ input{font:inherit;color:var(--ink)}
       <button class="back" data-back aria-label="홈으로">←</button>
       <h1>랭킹</h1>
     </div>
+    <p class="rankstatus" id="rankStatus" role="status"></p>
     <div class="leader" id="leader"></div>
     <h2 class="sec">내 최고 기록 올리기</h2>
     <div id="rankSubmit"></div>
-    <p class="note">랭킹은 기록 초기화를 해도 지워지지 않아요. 1위를 1주일 지킬 때마다 30P를 받아요.</p>
+    <p class="note">내 이름과 기록이 이 게임을 쓰는 모든 폰에 보여요. 기록 초기화를 해도 랭킹은 지워지지 않고, 1위를 1주일 지킬 때마다 30P를 받아요. 90ms보다 빠른 기록은 미리 누른 탭으로 보고 올릴 수 없어요.</p>
     <h2 class="sec">전체 순위</h2>
     <ol class="ranklist" id="rankList"></ol>
   </div>
@@ -394,6 +399,7 @@ input{font:inherit;color:var(--ink)}
     </div>
     <div class="lockov"></div>
   </div>
+  <div class="netwarn" id="netWarn" role="status" hidden></div>
   <canvas id="fx"></canvas>
 </section>
 
@@ -404,7 +410,7 @@ input{font:inherit;color:var(--ink)}
     <p class="sheet-lede">숨겨진 대결을 찾았어요. 로봇의 실력을 골라 주세요.</p>
     <div class="sheet-label">난이도</div>
     <div class="levels" id="botLevels" role="radiogroup" aria-label="난이도">
-      <button role="radio" data-lv="hard"><b>상</b><span>160~200ms</span></button>
+      <button role="radio" data-lv="hard"><b>상</b><span>160~200ms</span><span class="lvpt">이기면 10P</span></button>
       <button role="radio" data-lv="mid"><b>중</b><span>200~250ms</span></button>
       <button role="radio" data-lv="easy"><b>하</b><span>250~300ms</span></button>
     </div>
@@ -437,7 +443,11 @@ input{font:inherit;color:var(--ink)}
 <script>
 (function(){
 const $ = s => document.querySelector(s);
-const WIN_MIN = 1, WIN_MAX = 5;
+const WIN_MIN = 1;
+const WIN_MAX_BY_ROUNDS = {1:5, 3:7, 5:10};   // longer matches pay more
+const BOT_HARD_REWARD = 10;                   // only the 상 robot pays
+function winMax(rounds){ return WIN_MAX_BY_ROUNDS[rounds] || 5; }
+function rollWin(rounds){ return WIN_MIN + Math.floor(Math.random() * (winMax(rounds) - WIN_MIN + 1)); }
 const STACK = 3, HARD_CAP = 9;
 const DAY = 86400000, HOUR = 3600000, WEEK = 7 * DAY;
 const RANK_REWARD = 30;
@@ -484,6 +494,7 @@ const SPECIAL = {
 };
 const ITEM_KEYS = [...Object.keys(SABOTAGE), 'shield', 'mirror', 'double'];
 
+function fnv(str){ let h = 0x811c9dc5; for(let i=0;i<str.length;i++){ h ^= str.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; } return h.toString(16).padStart(8, '0'); }
 function ro(n){ return [0,3,6,7,8].includes(Math.abs(n) % 10) ? '으로' : '로'; } // 0:영, 3:삼… → 으로
 function josa(word, withBatchim, without){
   const c = word.charCodeAt(word.length - 1);
@@ -530,20 +541,25 @@ function normalize(s){
   return out;
 }
 function normalizeRank(r){
-  const out = {v:1, updatedAt:0, entries:[], leader:null};
-  if(!r || typeof r !== 'object') return out;
-  out.updatedAt = +r.updatedAt || 0;
-  const byName = {};
+  r = (r && typeof r === 'object') ? r : {};
+  const deviceId = (typeof r.deviceId === 'string' && /^[a-z0-9]{10}$/.test(r.deviceId)) ? r.deviceId : randStr(10);
+  const out = {v:2, updatedAt:+r.updatedAt || 0, deviceId, entries:[], paid:{}, lastSync:+r.lastSync || 0};
+  const byId = {};
   if(Array.isArray(r.entries)){
     r.entries.forEach(e => {
-      if(!e || typeof e.name !== 'string' || !e.name.trim() || !(+e.ms > 0)) return;
-      const en = {name:e.name.trim().slice(0,10), ms:Math.round(+e.ms), slot:e.slot === 1 ? 1 : 0, at:+e.at || 0};
-      if(!byName[en.name] || en.ms < byName[en.name].ms) byName[en.name] = en;
+      if(!e || typeof e.name !== 'string' || !e.name.trim()) return;
+      const name = e.name.trim().slice(0,10);
+      const id = (typeof e.id === 'string' && /^[a-z0-9]{10}[0-9a-f]{8}$/.test(e.id)) ? e.id : deviceId + fnv(name); // v1 entries become this phone's
+      const at = +e.at || Date.now();
+      const ms = Math.round(+e.ms);
+      if(!(ms >= 90 && ms <= 3000)) return;
+      const en = {id, name, ms, slot:e.slot === 1 ? 1 : 0, at, topSince:(+e.topSince > 0 && +e.topSince <= at) ? +e.topSince : at, dev:id.slice(0,10)};
+      if(!byId[id] || en.ms < byId[id].ms) byId[id] = en;
     });
   }
-  out.entries = Object.values(byName).slice(0, 300);
-  if(r.leader && typeof r.leader.name === 'string'){
-    out.leader = {name:r.leader.name, since:+r.leader.since || Date.now(), paid:clampInt(r.leader.paid, 0, 1e6)};
+  out.entries = Object.values(byId).slice(0, 500);
+  if(r.paid && typeof r.paid === 'object'){
+    Object.entries(r.paid).slice(0, 5).forEach(([k, v]) => { out.paid[k] = clampInt(v, 0, 1e6); });
   }
   return out;
 }
@@ -614,6 +630,7 @@ function show(id){
 }
 function openScreen(id){
   show(id);
+  if(id !== 'rank' && RANK.links.length) rankScheduleClose(3000);
   if(id === 'home') renderHome();
   if(id === 'shop') renderShop();
   if(id === 'rank') renderRank();
@@ -691,6 +708,7 @@ function renderHome(){
     box.appendChild(c);
   });
   document.querySelectorAll('#rounds button').forEach(b => b.setAttribute('aria-pressed', String(+b.dataset.r === state.rounds)));
+  $('#roundsNote').textContent = goalText() + '에서 이기면 ' + WIN_MIN + '~' + winMax(state.rounds) + 'P 중 랜덤으로 받아요. 단판은 최대 5P, 3판 2선승은 7P, 5판 3선승은 10P까지예요.';
   $('#godBtn').hidden = !state.god.on;
 }
 document.querySelectorAll('#rounds button').forEach(b => b.addEventListener('click', () => {
@@ -839,7 +857,11 @@ function renderShop(){
   }});
 }
 
-/* ---------- ranking ---------- */
+/* ---------- ranking: shared by every phone (retained MQTT messages, one per entry) ---------- */
+const RANK_TOPIC = 'rxnduel/rank/v1/';
+const RANK_MIN_MS = 90;
+const RANK = {links:[], connecting:false, status:'idle', seen:[], closeTimer:null, dirtyTimer:null};
+const isDefaultName = n => /^플레이어 [12]$/.test(n);
 function sortedEntries(){ return rank.entries.slice().sort((a, b) => a.ms - b.ms || a.at - b.at); }
 function fmtDur(ms){
   ms = Math.max(0, ms);
@@ -849,19 +871,114 @@ function fmtDur(ms){
   return Math.max(1, m) + '분';
 }
 function fmtDate(at){ if(!at) return ''; const d = new Date(at); return (d.getMonth()+1) + '월 ' + d.getDate() + '일'; }
+function cleanEntry(e, id){
+  if(!e || typeof e !== 'object' || typeof id !== 'string' || !/^[a-z0-9]{10}[0-9a-f]{8}$/.test(id) || e.id !== id) return null;
+  const ms = Math.round(+e.ms);
+  if(!(ms >= RANK_MIN_MS && ms <= 3000)) return null;
+  const name = typeof e.name === 'string' ? e.name.trim().slice(0,10) : '';
+  if(!name) return null;
+  const at = +e.at, ts = +e.topSince;
+  if(!(at > 0 && at < Date.now() + DAY)) return null;
+  return {id, name, ms, slot:e.slot === 1 ? 1 : 0, at, topSince:(ts > 0 && ts <= at) ? ts : at, dev:id.slice(0,10)};
+}
+function mergeEntry(e, force){
+  const k = rank.entries.findIndex(x => x.id === e.id);
+  if(k < 0){ rank.entries.push(e); return true; }
+  const ex = rank.entries[k];
+  if(force || e.ms < ex.ms){ rank.entries[k] = e; return true; }
+  return false;
+}
+function renderRankStatus(){
+  const el = $('#rankStatus');
+  if(!el) return;
+  const txt = window.claude ? '이 Claude 화면에서는 온라인 랭킹을 불러올 수 없어서 이 기기에 저장된 순위만 보여요.'
+    : RANK.status === 'live' ? '🌐 실시간 연결됨. 모든 폰이 같은 랭킹을 봐요.'
+    : RANK.status === 'loading' ? '🌐 전체 랭킹을 불러오는 중…'
+    : RANK.status === 'offline' ? '오프라인이에요. 마지막으로 불러온 순위를 보여줘요.'
+    : '🌐 모든 폰이 같은 랭킹을 봐요.';
+  el.textContent = txt;
+}
+function rankDirty(){
+  clearTimeout(RANK.dirtyTimer);
+  RANK.dirtyTimer = setTimeout(() => { saveRank(); if(current() === 'rank') renderRank(true); }, 250);
+}
+function rankOnMessage(idx, topic, text){
+  if(!topic.startsWith(RANK_TOPIC)) return;
+  const id = topic.slice(RANK_TOPIC.length);
+  let e;
+  try{ e = JSON.parse(text); }catch(err){ return; }
+  e = cleanEntry(e, id);
+  if(!e) return;
+  const seen = RANK.seen[idx] || (RANK.seen[idx] = {});
+  if(seen[id] === undefined || e.ms < seen[id]) seen[id] = e.ms;
+  if(mergeEntry(e)) rankDirty();
+}
+function publishEntry(link, idx, e){
+  const body = JSON.stringify({id:e.id, name:e.name, ms:e.ms, slot:e.slot, at:e.at, topSince:e.topSince});
+  try{ link.publish(RANK_TOPIC + e.id, body, true); }catch(err){}
+  const seen = RANK.seen[idx] || (RANK.seen[idx] = {});
+  seen[e.id] = e.ms;
+}
+function rankHeal(){
+  // the public server may forget things: put back anything this phone knows that the server lacks
+  RANK.links.forEach(({link, idx}) => {
+    const seen = RANK.seen[idx] || {};
+    sortedEntries().slice(0, 200).forEach(e => {
+      if(seen[e.id] === undefined || seen[e.id] > e.ms) publishEntry(link, idx, e);
+    });
+  });
+}
+function rankScheduleClose(ms){
+  clearTimeout(RANK.closeTimer);
+  RANK.closeTimer = setTimeout(() => {
+    if(current() === 'rank') return;
+    const links = RANK.links; RANK.links = [];
+    links.forEach(({link}) => link.close());
+    RANK.status = 'idle';
+  }, ms || 8000);
+}
+async function rankConnect(keepOpen){
+  if(window.claude) return;
+  if(RANK.links.length){ if(keepOpen) clearTimeout(RANK.closeTimer); else rankScheduleClose(); return; }
+  if(RANK.connecting) return;
+  RANK.connecting = true; RANK.status = 'loading'; RANK.seen = [];
+  renderRankStatus();
+  const cid = 'rxr' + randStr(9);
+  const results = await Promise.allSettled(NET_BROKERS.map(async (url, idx) => {
+    const link = mqttLink(url, cid + idx, null, null);
+    await link.connect(6000);
+    const holder = {link, idx};
+    link.onMessage((t, text) => rankOnMessage(idx, t, text));
+    link.onClose(() => {
+      RANK.links = RANK.links.filter(h => h !== holder);
+      if(!RANK.links.length && RANK.status === 'live'){ RANK.status = 'offline'; renderRankStatus(); }
+    });
+    await link.subscribe(RANK_TOPIC + '+');
+    return holder;
+  }));
+  RANK.connecting = false;
+  RANK.links = results.filter(r => r.status === 'fulfilled').map(r => r.value);
+  if(!RANK.links.length){ RANK.status = 'offline'; renderRankStatus(); return; }
+  RANK.status = 'live';
+  renderRankStatus();
+  setTimeout(() => {           // give the server a moment to hand over every saved entry
+    rank.lastSync = Date.now();
+    rankHeal(); saveRank(); checkLeader();
+    if(current() === 'rank') renderRank(true);
+  }, 1500);
+  if(!keepOpen && current() !== 'rank') rankScheduleClose(10000);
+}
 function checkLeader(){
   const top = sortedEntries()[0];
-  const now = Date.now();
-  if(!top){ if(rank.leader){ rank.leader = null; saveRank(); } return; }
-  if(!rank.leader || rank.leader.name !== top.name){
-    rank.leader = {name:top.name, since:now, paid:0};
-    saveRank();
-    return;
-  }
-  const weeks = Math.floor(Math.max(0, now - rank.leader.since) / WEEK);
-  if(weeks > rank.leader.paid){
-    const gain = (weeks - rank.leader.paid) * RANK_REWARD;
-    rank.leader.paid = weeks;
+  if(!top || top.dev !== rank.deviceId) return;
+  const fresh = window.claude || (Date.now() - (rank.lastSync || 0) < 30 * 60000);
+  if(!fresh) return;                        // only pay out when the shared ranking is up to date
+  const key = top.id + ':' + top.topSince;
+  const weeks = Math.floor(Math.max(0, Date.now() - top.topSince) / WEEK);
+  const paid = rank.paid[key] || 0;
+  if(weeks > paid){
+    const gain = (weeks - paid) * RANK_REWARD;
+    rank.paid = {[key]: weeks};
     const p = state.players[top.slot];
     p.points += gain;
     save(); saveRank();
@@ -871,40 +988,50 @@ function checkLeader(){
 function submitBest(i){
   const p = state.players[i];
   if(!p.best){ toast('아직 기록이 없어요. 대결부터 해볼까요?'); return; }
-  const ex = rank.entries.find(e => e.name === p.name);
+  if(isDefaultName(p.name)){ toast('모든 폰에 이름이 보여요. 홈에서 이름을 먼저 바꿔 주세요', 2800); return; }
+  if(p.best < RANK_MIN_MS){ toast(RANK_MIN_MS + 'ms보다 빠른 기록은 미리 누른 탭으로 보고 올릴 수 없어요', 2800); return; }
+  const id = rank.deviceId + fnv(p.name);
+  const ex = rank.entries.find(e => e.id === id);
   if(ex && ex.ms <= p.best){ toast('이미 같거나 더 빠른 기록이 올라가 있어요'); return; }
-  if(ex){ ex.ms = p.best; ex.slot = i; ex.at = Date.now(); }
-  else rank.entries.push({name:p.name, ms:p.best, slot:i, at:Date.now()});
+  const before = sortedEntries()[0];
+  const now = Date.now();
+  const wasTop = before && before.id === id;
+  const entry = {id, name:p.name, ms:p.best, slot:i, at:now, topSince: wasTop ? before.topSince : now, dev:rank.deviceId};
+  mergeEntry(entry, true);
   saveRank();
-  checkLeader();
-  const pos = sortedEntries().findIndex(e => e.name === p.name) + 1;
+  if(RANK.links.length) RANK.links.forEach(({link, idx}) => publishEntry(link, idx, entry));
+  else rankConnect(current() === 'rank');   // heal step uploads it once connected
+  const pos = sortedEntries().findIndex(e => e.id === id) + 1;
   toast(p.name + ' ' + p.best + 'ms 등록! 지금 ' + pos + '위', 2600);
-  renderRank();
+  renderRank(true);
 }
-function renderRank(){
+function renderRank(skipConnect){
+  if(!skipConnect) rankConnect(true);
+  renderRankStatus();
   checkLeader();
   const list = sortedEntries();
   const L = $('#leader'); L.innerHTML = '';
   if(!list.length){
     L.className = 'leader empty';
-    L.textContent = '아직 올라온 기록이 없어요. 아래에서 최고 기록을 올려 첫 1위가 되어 보세요.';
+    L.textContent = RANK.status === 'loading' ? '순위를 불러오는 중이에요…' : '아직 올라온 기록이 없어요. 아래에서 최고 기록을 올려 첫 1위가 되어 보세요.';
   } else {
     L.className = 'leader';
     const top = list[0];
-    const held = Math.max(0, Date.now() - rank.leader.since);
+    const held = Math.max(0, Date.now() - top.topSince);
     const left = WEEK - (held % WEEK);
-    const add = (cls, text) => { const d = document.createElement('div'); d.className = cls; d.textContent = text; L.appendChild(d); };
+    const add = (cls, text) => { const d = document.createElement('div'); d.className = cls; d.textContent = text; L.appendChild(d); return d; };
     add('crown', '🏆');
     add('ln', top.name);
     add('lms', top.ms + 'ms');
-    add('lmeta', '1위를 지킨 지 ' + fmtDur(held) + '\n다음 ' + RANK_REWARD + 'P 보상까지 ' + fmtDur(left) + (rank.leader.paid ? '\n지금까지 보상 ' + rank.leader.paid + '번 받았어요' : ''));
-    L.querySelector('.lmeta').style.whiteSpace = 'pre-line';
-    add('lnote', '보상은 이 기록을 올린 ' + seatName(top.slot) + ' 플레이어에게 들어가요.');
+    add('lmeta', '1위를 지킨 지 ' + fmtDur(held) + '\n다음 ' + RANK_REWARD + 'P 보상까지 ' + fmtDur(left)).style.whiteSpace = 'pre-line';
+    add('lnote', top.dev === rank.deviceId
+      ? '이 폰의 기록이에요. 보상은 ' + seatName(top.slot) + ' 플레이어에게 들어가요.'
+      : '보상은 이 기록을 올린 폰에 들어가요.');
   }
 
   const sub = $('#rankSubmit'); sub.innerHTML = '';
   state.players.forEach((p, i) => {
-    const ex = rank.entries.find(e => e.name === p.name);
+    const ex = rank.entries.find(e => e.id === rank.deviceId + fnv(p.name));
     let btn = '올리기', cls = 'buy', click = () => submitBest(i);
     if(!p.best){ btn = '기록 없음'; cls = 'idle'; click = null; }
     else if(ex && ex.ms <= p.best){ btn = '올라가 있음'; cls = 'idle'; click = null; }
@@ -913,11 +1040,12 @@ function renderRank(){
 
   const ol = $('#rankList'); ol.innerHTML = '';
   if(!list.length){ const e = document.createElement('li'); e.className = 'empty-line'; e.textContent = '순위가 비어 있어요.'; ol.appendChild(e); return; }
-  list.forEach((e, k) => {
+  list.slice(0, 100).forEach((e, k) => {
     const li = document.createElement('li');
+    if(e.dev === rank.deviceId) li.className = 'mine';
     const no = document.createElement('span'); no.className = 'no'; no.textContent = k === 0 ? '🥇' : k === 1 ? '🥈' : k === 2 ? '🥉' : (k + 1);
     const rn = document.createElement('span'); rn.className = 'rn'; rn.textContent = e.name;
-    const rd = document.createElement('span'); rd.className = 'rd'; rd.textContent = fmtDate(e.at) + ' 등록';
+    const rd = document.createElement('span'); rd.className = 'rd'; rd.textContent = (e.dev === rank.deviceId ? '이 폰의 기록, ' : '') + fmtDate(e.at) + ' 등록';
     rn.appendChild(rd);
     const ms = document.createElement('span'); ms.className = 'rms'; ms.textContent = e.ms + 'ms';
     li.append(no, rn, ms); ol.appendChild(li);
@@ -1337,7 +1465,12 @@ function matchOver(w){
     const L = BOT_LEVELS[G.bot.level];
     const human = state.players[G.bot.player];
     if(w === 0){
-      setHalf(0, '로봇 격파', '난이도 ' + L.label + ' 로봇을 ' + G.score[0] + ' : ' + G.score[1] + ro(G.score[1]) + ' 이겼어요', true);
+      let reward = '';
+      if(G.bot.level === 'hard'){
+        human.points += BOT_HARD_REWARD; save();
+        reward = ' +' + BOT_HARD_REWARD + 'P 받았어요. 지금 ' + human.points + 'P';
+      }
+      setHalf(0, '로봇 격파', '난이도 ' + L.label + ' 로봇을 ' + G.score[0] + ' : ' + G.score[1] + ro(G.score[1]) + ' 이겼어요.' + reward, true);
       setHalf(1, '패배', '삐빅. 인간의 승리를 인정합니다');
       if(human.fx.confetti) confetti(0);
       if(human.fx.fanfare) fanfare();
@@ -1350,7 +1483,7 @@ function matchOver(w){
   }
 
   const p = state.players[w];
-  const gain = WIN_MIN + Math.floor(Math.random() * (WIN_MAX - WIN_MIN + 1));
+  const gain = rollWin(state.rounds);
   const doubled = p.items.double > 0;
   if(doubled) p.items.double--;
   const total = doubled ? gain * 2 : gain;
@@ -1369,7 +1502,7 @@ function matchOver(w){
   const spin = () => {
     if(G.phase !== 'over') return;
     if(spins++ < 14){
-      sub.textContent = '포인트 뽑는 중 +' + (WIN_MIN + Math.floor(Math.random() * (WIN_MAX - WIN_MIN + 1))) + 'P';
+      sub.textContent = '포인트 뽑는 중 +' + rollWin(state.rounds) + 'P';
       later(spin, 50 + spins * 12);
     } else {
       sub.textContent = finalText;
@@ -1458,12 +1591,12 @@ document.addEventListener('keydown', e => {
 });
 
 /* ---------- online: MQTT over WebSocket through a free public broker ---------- */
-const NET_VERSION = 3;
-const NET_TOPIC = 'rxnduel/v3/';
+const NET_VERSION = 4;
+const NET_TOPIC = 'rxnduel/v3/';   // same room topic as before, so older versions get a clear "please update" reply
 const NET_BROKERS = (() => {
-  let q = null;
-  try{ q = new URLSearchParams(location.search).get('broker'); }catch(e){}
-  return q ? [q] : ['wss://broker.hivemq.com:8884/mqtt', 'wss://broker.emqx.io:8084/mqtt'];
+  let q = [];
+  try{ q = new URLSearchParams(location.search).getAll('broker'); }catch(e){}
+  return q.length ? q : ['wss://broker.hivemq.com:8884/mqtt', 'wss://broker.emqx.io:8084/mqtt'];
 })();
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 function randStr(n, chars){
@@ -1557,7 +1690,7 @@ function mqttLink(url, clientId, willTopic, willPayload){
         send(packet(0x82, cat([Uint8Array.of(id >> 8, id & 255), str(topic), Uint8Array.of(0)])));
       });
     },
-    publish(topic, text){ send(packet(0x30, cat([str(topic), enc.encode(text)]))); },
+    publish(topic, text, retain){ send(packet(retain ? 0x31 : 0x30, cat([str(topic), enc.encode(text)]))); },
     onMessage(fn){ onMsg = fn; },
     onClose(fn){ onClose = fn; },
     close(){
@@ -1571,7 +1704,8 @@ function mqttLink(url, clientId, willTopic, willPayload){
 
 const N = {
   active:false, lobby:'idle', status:'', err:'', token:0,
-  me:0, role:null, id:null, code:'', topic:'', link:null, joinTimer:null,
+  me:0, role:null, id:null, code:'', topic:'', links:[], joinTimer:null,
+  pending:new Map(), seen:new Set(), seenQ:[], seq:0, match:0, downSince:0, lockSeen:new Set(),
   oppId:null, opp:null, rounds:3, lastSeen:0, hb:null,
   phase:'idle', r:0, doneR:0, live:false, score:{h:0,g:0},
   readyFor:{h:0,g:0}, readyInfo:{h:{armed:null,mirror:false}, g:{armed:null,mirror:false}}, readySent:false, armed:null,
@@ -1597,10 +1731,113 @@ function cleanProfile(p){
     emoji: !!p.emoji, god: !!p.god
   };
 }
+/* every message goes out on every connected server; the first copy to arrive wins */
 function netSend(obj){
-  if(!N.link) return;
+  const up = N.links.filter(h => h.up);
+  if(!up.length) return;
   obj.f = N.id;
-  try{ N.link.publish(N.topic, JSON.stringify(obj)); }catch(e){}
+  obj.m = (++N.seq).toString(36);
+  const text = JSON.stringify(obj);
+  up.forEach(h => { try{ h.link.publish(N.topic, text); }catch(e){} });
+}
+/* important messages are repeated every second until the other phone confirms them */
+function netSendReliable(obj, key){
+  if(key.startsWith('auth:')) [...N.pending.keys()].forEach(k => { if(k.startsWith('auth:')) N.pending.delete(k); });
+  obj.k = key;
+  N.pending.set(key, {obj, tries:0});
+  netSend(obj);
+}
+function netResendPending(){
+  N.pending.forEach((p, key) => {
+    if(++p.tries > 45){ N.pending.delete(key); return; }
+    netSend(p.obj);
+  });
+}
+function netWarn(t){ const el = $('#netWarn'); if(!el) return; el.textContent = t; el.hidden = !t; }
+
+/* ----- server links: connect to all, reconnect on their own ----- */
+function makeHolder(idx, url){ return {idx, url, link:null, up:false, connecting:false, retry:0, lastRx:0, timer:null}; }
+async function linkUp(h, token){
+  if(h.connecting || h.up) return h.up;
+  h.connecting = true;
+  const topic = N.topic;
+  const link = mqttLink(h.url, 'rxd' + N.id + h.idx + randStr(2), topic, JSON.stringify({f:N.id, t:'drop'}));
+  try{
+    await link.connect(6000);
+    if(token !== N.token){ link.close(); h.connecting = false; return false; }
+    h.link = link;
+    link.onMessage((t, text) => { if(t === topic && h.link === link){ h.lastRx = Date.now(); netOnMessage(text); } });
+    link.onClose(() => { if(h.link === link) linkDown(h); });
+    await link.subscribe(topic);
+    if(token !== N.token || h.link !== link){ link.close(); h.connecting = false; return false; }
+    h.up = true; h.retry = 0; h.lastRx = Date.now(); h.connecting = false;
+    N.downSince = 0;
+    if(N.active) N.lastSeen = Math.max(N.lastSeen, Date.now() - 20000);
+    netResendPending();
+    if(current() === 'online') renderOnline();
+    return true;
+  }catch(e){
+    h.connecting = false;
+    if(h.link === link) h.link = null;
+    try{ link.close(); }catch(err){}
+    if(token === N.token) scheduleRelink(h);
+    return false;
+  }
+}
+function linkDown(h){
+  const l = h.link;
+  h.link = null; h.up = false;
+  try{ l && l.close(); }catch(e){}
+  if(!N.links.includes(h)) return;
+  if(!N.links.some(x => x.up) && !N.downSince) N.downSince = Date.now();
+  if(current() === 'online') renderOnline();
+  scheduleRelink(h);
+}
+function scheduleRelink(h){
+  clearTimeout(h.timer);
+  if(!(N.active || N.lobby !== 'idle') || !N.links.includes(h)) return;
+  const token = N.token;
+  const delay = Math.min(8000, 600 * Math.pow(2, h.retry++));
+  h.timer = setTimeout(() => { if(token === N.token && !h.up) linkUp(h, token); }, delay);
+}
+function relinkNow(){
+  N.links.forEach(h => { if(!h.up && !h.connecting){ clearTimeout(h.timer); h.retry = 0; linkUp(h, N.token); } });
+}
+function firstLinkUp(token){
+  return new Promise(res => {
+    let left = N.links.length;
+    N.links.forEach(h => linkUp(h, token).then(ok => { if(ok || --left <= 0) res(); }));
+  });
+}
+function startHeartbeat(){
+  clearInterval(N.hb);
+  let tick = 0;
+  N.hb = setInterval(() => {
+    tick++;
+    const now = Date.now();
+    // our own pings come back to us, so a link that has gone silent is a dead link
+    N.links.forEach(h => { if(h.up && now - h.lastRx > 9000) linkDown(h); });
+    if(tick % 2 === 0) netSend({t:'ping'});
+    netResendPending();
+    updateNetWarn(now);
+  }, 1000);
+}
+function updateNetWarn(now){
+  if(!N.active || N.phase === 'gone'){ netWarn(''); return; }
+  if(!N.links.some(h => h.up)){
+    const since = N.downSince || now;
+    if(now - since > 30000){ netOppLeft('인터넷 연결이 끊겼어요'); return; }
+    netWarn('📶 서버에 다시 연결하는 중… ' + Math.round((now - since) / 1000) + '초');
+    return;
+  }
+  const quiet = now - N.lastSeen;
+  if(quiet > 30000){ netOppLeft('상대와 연결이 끊겼어요'); return; }
+  if(quiet > 5000){ netWarn('📶 상대 신호를 기다리는 중… ' + Math.round(quiet / 1000) + '초'); return; }
+  netWarn('');
+}
+function netResetSession(role){
+  N.err = ''; N.id = randStr(10); N.role = role;
+  N.pending.clear(); N.seen.clear(); N.seenQ = []; N.seq = 0; N.match = 0; N.downSince = 0; N.lockSeen.clear();
 }
 
 /* ----- lobby ----- */
@@ -1612,7 +1849,8 @@ function renderOnline(){
   if(busy){
     $('#netLabel').textContent = N.lobby === 'hosting' ? '방 코드' : N.lobby === 'joining' ? '참가하는 방' : '방 만드는 중';
     $('#netCodeShow').textContent = N.code || '·····';
-    $('#netStatus').textContent = N.status;
+    const up = N.links.filter(h => h.up).length;
+    $('#netStatus').textContent = N.status + (N.links.length && N.lobby !== 'connecting' ? ' (서버 ' + up + '/' + N.links.length + ' 연결)' : '');
     $('#netCopy').hidden = N.lobby !== 'hosting';
   }
   $('#netErr').textContent = N.err || '';
@@ -1620,14 +1858,16 @@ function renderOnline(){
 function netStatus(s){ N.status = s; if(current() === 'online') renderOnline(); }
 function netTeardown(){
   N.token++;
-  clearTimeout(N.joinTimer); clearInterval(N.hb); clearTimeout(N.resTimer);
+  clearTimeout(N.joinTimer); clearInterval(N.hb); N.hb = null; clearTimeout(N.resTimer);
   netClearTimers();
-  const link = N.link;
-  if(link){ netSend({t:'leave'}); }
-  N.link = null;
-  if(link) setTimeout(() => link.close(), 60);
+  if(N.links.some(h => h.up)) netSend({t:'leave'});
+  const links = N.links;
+  N.links = [];
+  links.forEach(h => { clearTimeout(h.timer); const l = h.link; h.link = null; h.up = false; if(l) setTimeout(() => l.close(), 80); });
+  N.pending.clear();
   N.active = false; N.lobby = 'idle'; N.status = ''; N.code = '';
   N.oppId = null; N.opp = null; N.phase = 'idle'; N.live = false;
+  netWarn('');
 }
 function netError(msg){ netTeardown(); N.err = msg; if(current() === 'online') renderOnline(); }
 function connectFailMsg(){
@@ -1635,69 +1875,60 @@ function connectFailMsg(){
     ? '이 Claude 화면에서는 외부 서버 연결이 막혀 있어요. 앱이나 웹앱 버전에서 온라인 대결을 열어 주세요.'
     : '서버에 연결하지 못했어요. 인터넷 연결을 확인하고 다시 해 주세요.';
 }
-async function openLink(idx, code){
-  const topic = NET_TOPIC + code;
-  const link = mqttLink(NET_BROKERS[idx], 'rxd' + N.id, topic, JSON.stringify({f:N.id, t:'leave'}));
-  await link.connect(6000);
-  link.onMessage((t, text) => { if(t === topic && N.link === link) netOnMessage(text); });
-  link.onClose(() => { if(N.link === link) netLinkClosed(); });
-  await link.subscribe(topic);
-  return {link, topic};
-}
 async function netHost(){
   if(N.lobby !== 'idle') return;
-  N.err = ''; N.id = randStr(10); N.role = 'h'; N.lobby = 'connecting'; N.code = '';
+  netResetSession('h');
+  N.lobby = 'connecting'; N.code = '';
   netStatus('서버에 연결하는 중…');
   const token = ++N.token;
-  const chars = randStr(4, CODE_CHARS);
-  for(let idx=0; idx<NET_BROKERS.length; idx++){
-    const code = (idx + 1) + chars;
-    try{
-      const got = await openLink(idx, code);
-      if(token !== N.token){ got.link.close(); return; }
-      N.link = got.link; N.topic = got.topic; N.code = code; N.lobby = 'hosting';
-      netStatus('친구를 기다리는 중이에요. 이 코드를 알려주세요.');
-      return;
-    }catch(e){ if(token !== N.token) return; }
-  }
-  netError(connectFailMsg());
+  const code = '1' + randStr(4, CODE_CHARS);
+  N.topic = NET_TOPIC + code;
+  N.links = NET_BROKERS.map((url, idx) => makeHolder(idx, url));
+  startHeartbeat();
+  await firstLinkUp(token);
+  if(token !== N.token) return;
+  if(!N.links.some(h => h.up)){ netError(connectFailMsg()); return; }
+  N.code = code; N.lobby = 'hosting';
+  netStatus('친구를 기다리는 중이에요. 이 코드를 알려주세요.');
 }
 async function netJoin(){
   if(N.lobby !== 'idle') return;
   const code = $('#netCode').value.toUpperCase().replace(/[^A-Z0-9]/g, '');
-  if(!/^[12][A-Z0-9]{4}$/.test(code) || +code[0] > NET_BROKERS.length){
+  if(!/^[1-9][A-Z0-9]{4}$/.test(code)){
     N.err = '코드는 숫자 1개로 시작하는 5자리예요. 다시 확인해 주세요.'; renderOnline(); return;
   }
-  N.err = ''; N.id = randStr(10); N.role = 'g'; N.lobby = 'joining'; N.code = code;
+  netResetSession('g');
+  N.lobby = 'joining'; N.code = code;
   netStatus('서버에 연결하는 중…');
   const token = ++N.token;
-  try{
-    const got = await openLink(+code[0] - 1, code);
-    if(token !== N.token){ got.link.close(); return; }
-    N.link = got.link; N.topic = got.topic;
-  }catch(e){ if(token === N.token) netError(connectFailMsg()); return; }
+  N.topic = NET_TOPIC + code;
+  N.links = NET_BROKERS.map((url, idx) => makeHolder(idx, url));
+  startHeartbeat();
+  await firstLinkUp(token);
+  if(token !== N.token) return;
+  if(!N.links.some(h => h.up)){ netError(connectFailMsg()); return; }
   netStatus('방장을 찾는 중…');
   let tries = 0;
   const knock = () => {
     if(token !== N.token || N.active) return;
-    if(tries++ >= 5){ netError('방을 찾지 못했어요. 코드를 확인하거나 친구에게 방을 다시 만들어 달라고 해 주세요.'); return; }
+    if(tries++ >= 8){ netError('방을 찾지 못했어요. 코드를 확인하거나 친구에게 방을 다시 만들어 달라고 해 주세요.'); return; }
     netSend({t:'join', p:myNetProfile(), v:NET_VERSION});
     N.joinTimer = setTimeout(knock, 2000);
   };
   knock();
 }
-function netLinkClosed(){
-  if(N.active) netOppLeft('서버 연결이 끊겼어요');
-  else if(N.lobby !== 'idle') netError('서버 연결이 끊겼어요. 다시 해 주세요.');
-  N.link = null;
-}
-
 /* ----- messages ----- */
 function netOnMessage(text){
   let m;
   try{ m = JSON.parse(text); }catch(e){ return; }
   if(!m || typeof m !== 'object' || typeof m.f !== 'string' || m.f === N.id) return;
   if(m.to && m.to !== N.id) return;
+  if(typeof m.m === 'string'){
+    const mid = m.f + ':' + m.m;
+    if(N.seen.has(mid)) return;              // same message via the other server
+    N.seen.add(mid); N.seenQ.push(mid);
+    if(N.seenQ.length > 800) N.seen.delete(N.seenQ.shift());
+  }
   if(m.t === 'join'){ if(N.role === 'h') hostOnJoin(m); return; }
   if(m.t === 'welcome'){ if(N.role === 'g' && !N.oppId) guestOnWelcome(m); return; }
   if(m.t === 'full'){
@@ -1705,7 +1936,10 @@ function netOnMessage(text){
     return;
   }
   if(!N.active || m.f !== N.oppId) return;
+  if(m.t === 'drop') return;                 // one server lost them; the other may still carry them
   N.lastSeen = Date.now();
+  if(m.t === 'ack'){ N.pending.delete(m.a); return; }
+  if(typeof m.k === 'string' && m.k.length < 60) netSend({t:'ack', a:m.k});
   switch(m.t){
     case 'ping': break;
     case 'leave': netOppLeft('상대가 대결에서 나갔어요'); break;
@@ -1750,12 +1984,7 @@ function startNetMatch(){
   N.readyFor = {h:0,g:0}; N.readyInfo = {h:{armed:null,mirror:false}, g:{armed:null,mirror:false}};
   N.rematch = {h:false,g:false}; N.smiteUsed = false; N.lastSeen = Date.now();
   if(N.role === 'h') N.rounds = state.rounds;
-  clearInterval(N.hb);
-  N.hb = setInterval(() => {
-    if(!N.active) return;
-    netSend({t:'ping'});
-    if(N.phase !== 'gone' && Date.now() - N.lastSeen > 16000) netOppLeft('상대와 연결이 끊겼어요');
-  }, 4000);
+  if(!N.hb) startHeartbeat();
   const me = state.players[N.me];
   battle.classList.remove('over','bot','smite');
   battle.classList.add('net');
@@ -1854,8 +2083,8 @@ function hostTryStart(){
   if(fx.h.fake || fx.g.fake) hold = Math.max(hold, 2100);
   const fake = {h:null, g:null};
   ['h','g'].forEach(role => { if(fx[role].fake) fake[role] = Math.round(450 + Math.random() * (hold - 1100)); });
-  const msg = {t:'start', r, hold:Math.round(hold), fx, use, notes, fake};
-  netSend(msg);
+  const msg = {t:'start', r, hold:Math.round(hold), fx, use, notes, fake, score:{h:N.score.h, g:N.score.g}, match:N.match, rounds:N.rounds};
+  netSendReliable(msg, 'auth:start:' + r);
   netOnStart(msg);
 }
 function netOnStart(m){
@@ -1863,6 +2092,15 @@ function netOnStart(m){
   if(r !== N.r + 1) return;
   netClearTimers(); clearFx(); clearTimeout(N.resTimer);
   const me = N.role;
+  if(N.role === 'g'){
+    const mt = clampInt(m.match, 0, 1e6);
+    if(mt > N.match){                        // the "new match" message got lost; catch up
+      N.match = mt; N.smiteUsed = false; N.rematch = {h:false, g:false};
+      N.rounds = [1,3,5].includes(m.rounds) ? m.rounds : N.rounds;
+    }
+    if(m.score && typeof m.score === 'object') N.score = {h:clampInt(m.score.h, 0, 99), g:clampInt(m.score.g, 0, 99)};
+  }
+  battle.classList.remove('over');
   N.r = r; N.phase = 'lights'; N.live = true; N.res = {h:null,g:null}; N.stickyHit = false;
   const hold = Math.min(4000, Math.max(300, +m.hold || 1500));
   const p = state.players[N.me];
@@ -1889,7 +2127,7 @@ function netOnStart(m){
     nlater(netGo, hold);
     netForesight();
   }, lead + 4*step + 300);
-  if(N.role === 'h') N.resTimer = setTimeout(() => hostForceResolve(r), lead + 4*step + 300 + hold + 5000 + 4000);
+  if(N.role === 'h') N.resTimer = setTimeout(() => hostForceResolve(r), lead + 4*step + 300 + hold + 5000 + 10000);
 }
 function netFakeFlash(){
   if(N.phase !== 'hold') return;
@@ -1943,7 +2181,7 @@ function netTap(e){
       if(N.role === 'h') N.readyInfo.h = {armed, mirror: p.items.mirror > 0};
       setHalf(0, '준비 완료', armed ? SABOTAGE[armed].icon + ' ' + SABOTAGE[armed].name + ' 장전됨' : '상대를 기다리는 중', false, true);
       renderNetTools();
-      netSend({t:'ready', r, armed, mirror: p.items.mirror > 0});
+      netSendReliable({t:'ready', r, armed, mirror: p.items.mirror > 0}, 'ready:' + r);
       if(N.role === 'h') hostTryStart();
       break;
     }
@@ -1969,7 +2207,7 @@ function netTap(e){
 }
 function netReport(res){
   const m = Object.assign({t:'res', r:N.r}, res);
-  netSend(m);
+  netSendReliable(m, 'res:' + N.r);
   if(N.role === 'h') hostOnRes('h', m);
 }
 function netFalseStart(){
@@ -2018,9 +2256,9 @@ function hostResolve(msg){
     if(msg.w) N.score[msg.w]++;
     msg.score = {h:N.score.h, g:N.score.g};
     msg.over = !!msg.w && N.score[msg.w] >= Math.ceil(N.rounds / 2);
-    netSend(msg); netOnRound(msg);
+    netSendReliable(msg, 'auth:round:' + msg.r); netOnRound(msg);
   } else {
-    netSend(msg); netOnReplay(msg);
+    netSendReliable(msg, 'auth:replay:' + msg.r); netOnReplay(msg);
   }
 }
 function netOnRound(m){
@@ -2076,18 +2314,21 @@ function netSmite(){
   N.smiteUsed = true;
   renderNetTools();
   const m = {t:'smite', r:N.r};
-  netSend(m);
+  netSendReliable(m, 'smite:' + N.r);
   if(N.role === 'h') hostOnSmite('h', m);
 }
 function netLock(){
   if(N.lockUsed || !['ready','lights','hold','go','sent'].includes(N.phase)) return;
   N.lockUsed = true;
   const sec = state.god.lockSec;
-  netSend({t:'lock', sec});
+  const id = randStr(8);
+  netSendReliable({t:'lock', sec, id}, 'lock:' + id);
   G.lockUntil[1] = performance.now() + sec * 1000;
   startLockTick(); buzz(80); renderNetTools();
 }
 function netOnLock(m){
+  if(typeof m.id !== 'string' || N.lockSeen.has(m.id)) return;
+  N.lockSeen.add(m.id);
   const sec = [1,3,5].includes(+m.sec) ? +m.sec : 3;
   G.lockUntil[0] = performance.now() + sec * 1000;
   startLockTick(); buzz(80);
@@ -2103,7 +2344,7 @@ function netMatchOver(w){
   $('#againBtn').textContent = '재대결';
   if(w === me){
     const p = state.players[N.me];
-    const gain = WIN_MIN + Math.floor(Math.random() * (WIN_MAX - WIN_MIN + 1));
+    const gain = rollWin(N.rounds);
     const doubled = p.items.double > 0;
     if(doubled) p.items.double--;
     const total = doubled ? gain * 2 : gain;
@@ -2122,7 +2363,7 @@ function netMatchOver(w){
 function netRequestRematch(){
   if(N.phase !== 'over' || N.rematch[N.role]) return;
   N.rematch[N.role] = true;
-  netSend({t:'rematch'});
+  netSendReliable({t:'rematch', match:N.match}, 'rematch:' + N.match);
   halves[0].querySelector('.sub').textContent = '재대결 신청! 상대를 기다리는 중';
   if(N.role === 'h') hostCheckRematch();
 }
@@ -2134,11 +2375,13 @@ function netOnRematch(role){
 }
 function hostCheckRematch(){
   if(!(N.rematch.h && N.rematch.g)) return;
-  const m = {t:'newmatch', rounds:state.rounds};
-  netSend(m); netOnNewMatch(m);
+  const m = {t:'newmatch', rounds:state.rounds, match:N.match + 1};
+  netSendReliable(m, 'auth:newmatch:' + m.match);
+  netOnNewMatch(m);
 }
 function netOnNewMatch(m){
   if(N.phase !== 'over') return;
+  N.match = clampInt(m.match, 0, 1e6);
   N.score = {h:0, g:0};
   N.rounds = N.role === 'h' ? state.rounds : ([1,3,5].includes(m.rounds) ? m.rounds : 3);
   N.smiteUsed = false; N.rematch = {h:false, g:false};
@@ -2149,6 +2392,7 @@ function netOppLeft(reason){
   if(!N.active || N.phase === 'gone') return;
   netClearTimers(); clearFx(); lightsSet(0); clearTimeout(N.resTimer);
   N.live = false; N.phase = 'gone';
+  netWarn('');
   battle.classList.add('over');
   $('#againBtn').hidden = true;
   setHalf(1, '연결 끊김', '');
@@ -2171,6 +2415,17 @@ $('#onlineBtn').addEventListener('click', () => {
 });
 $('#onlineBack').addEventListener('click', () => { netTeardown(); N.err = ''; openScreen('home'); });
 $('#netHostBtn').addEventListener('click', netHost);
+window.addEventListener('online', () => { if(N.active || N.lobby !== 'idle') relinkNow(); });
+window.addEventListener('pagehide', () => { if(N.active && N.links.some(h => h.up)) netSend({t:'leave'}); });
+document.addEventListener('visibilitychange', () => {
+  if(document.visibilityState !== 'visible' || !(N.active || N.lobby !== 'idle')) return;
+  const now = Date.now();
+  N.lastSeen = Math.max(N.lastSeen, now - 20000);       // a short trip to another app gets some grace
+  if(N.downSince) N.downSince = Math.max(N.downSince, now - 20000);
+  N.links.forEach(h => { if(h.up && now - h.lastRx > 4000) linkDown(h); }); // sockets often die while hidden
+  relinkNow();
+});
+if(new URLSearchParams(location.search).getAll('broker').length) window.__net = () => ({links:N.links.map(h => h.up), phase:N.phase, score:N.score, pending:[...N.pending.keys()]});
 $('#netJoinBtn').addEventListener('click', netJoin);
 $('#netCode').addEventListener('keydown', e => { if(e.key === 'Enter') netJoin(); });
 $('#netCode').addEventListener('input', e => { const v = e.target.value.toUpperCase(); if(v !== e.target.value) e.target.value = v; });
@@ -2187,7 +2442,9 @@ const botChoice = {level:'mid', player:0};
 function renderBotDialog(){
   document.querySelectorAll('#botLevels button').forEach(b => b.setAttribute('aria-checked', String(b.dataset.lv === botChoice.level)));
   segButtons($('#botWho'), botChoice.player, i => { botChoice.player = i; renderBotDialog(); });
-  $('#botNote').textContent = '대결 방식은 홈에서 고른 ' + goalText() + '이에요. 로봇전은 포인트 없이 최고 기록만 남아요.';
+  $('#botNote').textContent = '대결 방식은 홈에서 고른 ' + goalText() + '이에요. ' + (botChoice.level === 'hard'
+    ? '상 로봇을 이길 때마다 ' + BOT_HARD_REWARD + 'P를 받아요.'
+    : '중과 하 로봇은 포인트 없이 최고 기록만 남아요. 포인트는 상 로봇만 줘요.');
 }
 function openBotDialog(){ renderBotDialog(); botModal.hidden = false; setTimeout(() => $('#botYes').focus({preventScroll:true}), 60); }
 function closeBotDialog(){ botModal.hidden = true; }
@@ -2295,6 +2552,7 @@ window.appBack = function(){
 renderHome();
 heroIntro();
 initDb();
+setTimeout(() => rankConnect(false), 2500);
 })();
 </script>
 <script>
